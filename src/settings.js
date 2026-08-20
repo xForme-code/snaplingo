@@ -141,14 +141,21 @@ async function init() {
 
   const ocrLanguages = el('ocrLanguages');
   ocrLanguages.value = (config.ocrLanguages ?? []).join(',');
-  ocrLanguages.addEventListener('change', () =>
-    patch({
-      ocrLanguages: ocrLanguages.value
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    })
-  );
+  ocrLanguages.addEventListener('change', () => {
+    const tags = ocrLanguages.value
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    // 语言标签只能是字母/数字/连字符。Windows 的 OCR 把这个值拼进 PowerShell
+    // 脚本，非法字符会跳出字符串上下文——后端也会再挡一次，这里是为了让用户
+    // 当场看到问题，而不是被静默改成默认值。
+    const bad = tags.filter((t) => !/^[A-Za-z0-9-]{1,35}$/.test(t));
+    if (bad.length) {
+      setStatus(`语言标签不合法：${bad.join(', ')}（只能用字母、数字和连字符）`, 'error');
+      return;
+    }
+    patch({ ocrLanguages: tags });
+  });
 
   const options = (list) =>
     list.map((l) => `<option value="${l.code}">${l.label}</option>`).join('');

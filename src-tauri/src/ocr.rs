@@ -51,6 +51,19 @@ async fn recognize_platform(app: &AppHandle, image_path: &Path) -> Result<String
     Ok(parsed.text)
 }
 
+/// 语言标签只允许字母、数字和连字符（BCP-47 的合法字符集）。
+///
+/// 这个值来自设置里可自由编辑的文本框，而 Windows 的 OCR 走 PowerShell
+/// **脚本字符串拼接**——不校验的话，一个引号就能跳出字符串上下文执行任意命令。
+/// 路径那边做了转义，语言这边原来漏了。
+pub(crate) fn is_valid_language_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag.len() <= 35 // BCP-47 实际长度远小于此
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 #[cfg(target_os = "windows")]
 async fn recognize_platform(_app: &AppHandle, image_path: &Path) -> Result<String> {
     use tokio::process::Command;
@@ -62,6 +75,14 @@ async fn recognize_platform(_app: &AppHandle, image_path: &Path) -> Result<Strin
         .first()
         .cloned()
         .unwrap_or_else(|| "zh-Hans".into());
+
+    // 宁可退回默认值也不能把可疑内容拼进脚本
+    let language = if is_valid_language_tag(&language) {
+        language
+    } else {
+        log::warn!("OCR 语言标签 {language:?} 不合法，退回 zh-Hans");
+        "zh-Hans".to_string()
+    };
 
     let script = format!(
         r#"
@@ -227,5 +248,31 @@ mod tests {
     #[test]
     fn collapses_blank_runs() {
         assert_eq!(normalize("a\n\n\n\nb"), "a\n\nb");
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::is_valid_language_tag;
+
+    #[test]
+    fn accepts_real_bcp47_tags() {
+        for tag in ["zh-Hans", "en-US", "ja", "zh-Hant-TW", "pt-BR"] {
+            assert!(is_valid_language_tag(tag), "{tag} 应该被接受");
+        }
+    }
+
+    #[test]
+    fn rejects_powershell_injection_attempts() {
+        // Windows 的 OCR 把这个值拼进脚本字符串，引号能跳出上下文执行命令
+        for tag in [
+            "zh'); Remove-Item C:\\ -Recurse; ('",
+            "en_US; calc.exe",
+            "zh Hans",     // 空格
+            "zh$(whoami)", // 子表达式
+            "",
+        ] {
+            assert!(!is_valid_language_tag(tag), "{tag:?} 应该被拒绝");
+        }
     }
 }
