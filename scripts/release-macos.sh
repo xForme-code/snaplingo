@@ -3,6 +3,8 @@
 #
 # 用法: bash scripts/release-macos.sh [版本号]
 #   版本号省略时用 tauri.conf.json 里的值。
+#   默认出 universal 二进制（Apple Silicon + Intel 一个包通吃）；
+#   想只出本机架构的话 TARGET_TRIPLE=aarch64-apple-darwin bash scripts/release-macos.sh
 #
 # 两套签名不要混淆：
 #   · 代码签名（SnapLingo Dev Signing）→ 让 macOS 允许运行
@@ -20,7 +22,23 @@ REPO="xForme-code/snaplingo"
 
 VERSION="${1:-$(python3 -c 'import json;print(json.load(open("src-tauri/tauri.conf.json"))["version"])')}"
 TAG="v$VERSION"
-echo "[release] 版本 $TAG"
+export TARGET_TRIPLE="${TARGET_TRIPLE:-universal-apple-darwin}"
+echo "[release] 版本 $TAG，目标 $TARGET_TRIPLE"
+
+if [[ "$TARGET_TRIPLE" == *universal* || "$TARGET_TRIPLE" == x86_64* ]]; then
+  rustup target add x86_64-apple-darwin >/dev/null
+  # ct2rs 0.10 的 build.rs 按**宿主**架构决定 CMAKE_OSX_ARCHITECTURES，
+  # 在 Apple Silicon 上交叉编 x86_64 会传成 arm64，和 --target=x86_64 打架，
+  # ruy 的 AVX 代码路径报 unsupported option '-mavx'。用工具链文件强行掰回来。
+  # 变量名带目标后缀（cmake-rs 认下划线形式），只对 x86_64 那一半生效——
+  # universal 的 arm64 那一半本来就是对的，套上去反而会编错架构。
+  export CMAKE_TOOLCHAIN_FILE_x86_64_apple_darwin="$PWD/scripts/cmake/x86_64-apple-darwin.cmake"
+fi
+
+# C/C++ 依赖（CTranslate2、sentencepiece）默认按**编译机器**的系统版本设
+# -mmacosx-version-min。Rust 那边是 11.0，两边对不上会一路警告；更要命的是
+# Intel Mac 根本没有 macOS 26，x86_64 那半边真按 26 打上去就没人能启动。
+export MACOSX_DEPLOYMENT_TARGET=11.0
 
 # ---------------------------------------------------------------- 构建
 echo "[build] 编译 sidecar"
@@ -31,19 +49,26 @@ echo "[build] 构建并签名（同时产出 DMG 和更新包）"
 export TAURI_SIGNING_PRIVATE_KEY="$KEY"   # v2 认这个名字，值可以是路径或密钥内容
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 export APPLE_SIGNING_IDENTITY="$CERT"
-npx -y @tauri-apps/cli@^2 build --bundles dmg,app
+npx -y @tauri-apps/cli@^2 build --target "$TARGET_TRIPLE" --bundles dmg,app
 
-BUNDLE="src-tauri/target/release/bundle"
-# Tauri 的默认命名是 SnapLingo_0.2.1_aarch64.dmg，下面会统一改成
-# snaplingo-<版本>.dmg。改名只在上传前做，构建产物本身不动。
-DMG_RAW="$BUNDLE/dmg/SnapLingo_${VERSION}_aarch64.dmg"
+BUNDLE="src-tauri/target/$TARGET_TRIPLE/release/bundle"
+# Tauri 的 DMG 命名里带架构（SnapLingo_0.4.0_aarch64.dmg / _x64 / _universal），
+# 与其猜后缀不如直接找——猜错了脚本会在最后一步才炸。
+# 统一改名成 snaplingo-<版本>.dmg，改名只在上传前做，构建产物本身不动。
+DMG_RAW="$(ls "$BUNDLE/dmg/SnapLingo_${VERSION}_"*.dmg 2>/dev/null | head -1 || true)"
 DMG="$BUNDLE/dmg/snaplingo-${VERSION}.dmg"
 TARBALL="$BUNDLE/macos/SnapLingo.app.tar.gz"
 SIGFILE="$TARBALL.sig"
 
-for f in "$DMG_RAW" "$TARBALL" "$SIGFILE"; do
+[[ -n "$DMG_RAW" ]] || { echo "[error] 没找到 DMG: $BUNDLE/dmg/SnapLingo_${VERSION}_*.dmg"; exit 1; }
+for f in "$TARBALL" "$SIGFILE"; do
   [[ -f "$f" ]] || { echo "[error] 缺少产物: $f"; exit 1; }
 done
+
+# 产物架构如实报出来：universal 少了一半 slice 的话，Intel 用户装上去
+# 是「打不开」，而这里不看根本发现不了。
+ARCHS="$(lipo -archs "$BUNDLE/macos/SnapLingo.app/Contents/MacOS/SnapLingo")"
+echo "[build] 主程序架构: $ARCHS"
 
 cp "$DMG_RAW" "$DMG"
 
@@ -54,20 +79,26 @@ ASSET="snaplingo-${VERSION}.app.tar.gz"
 cp "$TARBALL" "$BUNDLE/macos/$ASSET"
 
 echo "[manifest] 生成 latest.json"
-python3 - "$VERSION" "$SIGFILE" "$REPO" "$TAG" "$ASSET" > "$BUNDLE/latest.json" <<'PY'
+python3 - "$VERSION" "$SIGFILE" "$REPO" "$TAG" "$ASSET" "$ARCHS" > "$BUNDLE/latest.json" <<'PY'
 import json, sys, datetime
-version, sigfile, repo, tag, asset = sys.argv[1:6]
+version, sigfile, repo, tag, asset, archs = sys.argv[1:7]
 signature = open(sigfile).read().strip()
+url = f"https://github.com/{repo}/releases/download/{tag}/{asset}"
+
+# platforms 的键必须和产物里真有的架构对上。多写一个键，那个架构的用户会
+# 下载到跑不了的包；少写一个，那批用户就永远收不到更新。所以照 lipo 报出来的
+# slice 生成，不写死。darwin-universal 是 Tauri 对 universal 包的额外识别键。
+mapping = {"arm64": "darwin-aarch64", "x86_64": "darwin-x86_64"}
+slices = archs.split()
+platforms = {mapping[a]: {"signature": signature, "url": url} for a in slices if a in mapping}
+if len(slices) > 1:
+    platforms["darwin-universal"] = {"signature": signature, "url": url}
+
 print(json.dumps({
     "version": version,
     "notes": f"SnapLingo {version}",
     "pub_date": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-    "platforms": {
-        "darwin-aarch64": {
-            "signature": signature,
-            "url": f"https://github.com/{repo}/releases/download/{tag}/{asset}",
-        }
-    },
+    "platforms": platforms,
 }, ensure_ascii=False, indent=2))
 PY
 

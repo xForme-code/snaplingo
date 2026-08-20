@@ -2,8 +2,9 @@
 
 划词翻译 / 截图翻译 / 文字提取工具。
 
-**当前只发布 macOS（Apple Silicon）版本。** Windows / Linux 的代码路径已就位并能编译，
-但截图框选尚未接通、也没有在真机验证过，暂不提供构建产物。
+**当前只发布 macOS 版本**（universal 二进制，Apple Silicon 与 Intel 通用；
+Intel 那一半只在 CI 上编译验证过，没有实机跑过）。Windows / Linux 的代码路径
+已就位并能编译，但截图框选尚未接通、也没有在真机验证过，暂不提供构建产物。
 
 常驻菜单栏（系统托盘），不占 Dock。
 
@@ -49,6 +50,10 @@ macOS：下载 [Releases](../../releases) 里的 `.dmg`，拖进「应用程序�
 
 装好之后会**自动检查更新**：启动 20 秒后静默查一次，有新版本才弹窗询问，
 装不装由你决定。也可以从托盘菜单「检查更新…」手动触发。
+
+各引擎的 API Key 存在 **macOS 钥匙串**里，不写进 `config.json`——配置文件是明文的，
+贴 issue、丢进同步盘、被备份工具抄走都很常见，密钥不该跟着一起走。老版本留在
+`config.json` 里的明文密钥会在首次启动时自动搬进钥匙串并把文件里的抹掉。
 
 ---
 
@@ -224,6 +229,13 @@ npm run install:macos   # 构建 + 固定证书签名 + 装到 ~/Applications
 
 跨平台打包需要在对应系统上编译：macOS 上打不出 Windows 安装包。
 
+发布用的 `scripts/release-macos.sh` 默认出 universal 二进制（一个包同时给
+Apple Silicon 和 Intel）。只想要本机架构的话：
+
+```bash
+TARGET_TRIPLE=aarch64-apple-darwin bash scripts/release-macos.sh
+```
+
 ### 测试
 
 ```bash
@@ -248,7 +260,7 @@ src-tauri/src/
   permissions.rs       权限自检与引导
   capture.rs           截图
   ocr.rs               各平台 OCR 分发
-  extract.rs           本地正则提取（链接 / 邮箱 / 电话 / 日期 / 金额…）
+  secrets.rs           API Key 存取（macOS 走 Keychain）
   collector.rs         收集夹存储
   localmodel.rs        离线模型下载与管理（断点续传）
   translate/           翻译引擎（system / opus / google / youdao / baidu / openai / deepl / claude / libre）
@@ -265,7 +277,6 @@ helpers/macos-ocr.swift   macOS Vision OCR helper
 **已验证可用**
 - 四个翻译引擎的调用与解析（Google 已跑通真实请求）
 - macOS Vision OCR（实测中英混排全对）
-- 本地内容提取（7 类实体，单元测试覆盖）
 - 标识符拆词、OCR 文本清洗（单元测试覆盖）
 - 应用启动、托盘常驻、内存占用
 

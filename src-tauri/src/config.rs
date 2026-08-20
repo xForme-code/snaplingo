@@ -188,6 +188,11 @@ fn default_system() -> String {
 static CONFIG: Lazy<RwLock<Config>> = Lazy::new(|| RwLock::new(load_from_disk()));
 
 pub fn config_dir() -> PathBuf {
+    // 留一个环境变量口子：测试必须在临时目录里跑，不能动用户真实的配置。
+    // （顺带也是「便携模式」的入口，想把配置放 U 盘上的话。）
+    if let Some(dir) = std::env::var_os("SNAPLINGO_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("SnapLingo")
@@ -197,14 +202,79 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
+/// 走独立凭据存储（macOS Keychain）的字段。
+///
+/// 左边的名字会成为 Keychain 里的 account，**不要改**——改一个名字，
+/// 老用户对应的那个 Key 就再也读不出来。
+fn secret_slots(cfg: &mut Config) -> Vec<(&'static str, &mut String)> {
+    vec![
+        ("deepl_api_key", &mut cfg.deepl_api_key),
+        ("claude_api_key", &mut cfg.claude_api_key),
+        ("libre_api_key", &mut cfg.libre_api_key),
+        ("openai_api_key", &mut cfg.openai_api_key),
+        ("youdao_app_secret", &mut cfg.youdao_app_secret),
+        ("baidu_secret", &mut cfg.baidu_secret),
+    ]
+}
+
 fn load_from_disk() -> Config {
-    match std::fs::read_to_string(config_path()) {
+    let mut cfg = match std::fs::read_to_string(config_path()) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|err| {
             log::warn!("配置解析失败，回退到默认值: {err}");
             Config::default()
         }),
         Err(_) => Config::default(),
+    };
+
+    if !crate::secrets::available() {
+        return cfg;
     }
+
+    // 文件里还留着明文密钥 = 老版本写的，重新落一次盘就会被搬进 Keychain。
+    let mut has_plaintext = false;
+    for (name, slot) in secret_slots(&mut cfg) {
+        if slot.is_empty() {
+            if let Some(value) = crate::secrets::load(name) {
+                *slot = value;
+            }
+        } else {
+            has_plaintext = true;
+        }
+    }
+
+    if has_plaintext {
+        log::info!("config.json 里有明文密钥，迁移到 Keychain");
+        // 这里**不能**走 save()：本函数是 CONFIG 这个 Lazy 的初始化过程，
+        // save() 会去拿 CONFIG 的写锁，等于自己等自己，直接死锁。
+        if let Err(err) = persist(&cfg) {
+            log::warn!("迁移明文密钥失败，先按原样留着: {err}");
+        }
+    }
+
+    cfg
+}
+
+/// 落盘：密钥写进 Keychain，其余字段写 config.json。
+///
+/// 有 Keychain 的平台上，写进文件的那份必须把密钥字段清成空串——
+/// 只「不再写入」是不够的，老文件里的明文还在。
+fn persist(cfg: &Config) -> anyhow::Result<()> {
+    let mut on_disk = cfg.clone();
+
+    if crate::secrets::available() {
+        for (name, slot) in secret_slots(&mut on_disk) {
+            match crate::secrets::store(name, slot) {
+                // 进了 Keychain，文件里就不留明文
+                Ok(()) => slot.clear(),
+                // 钥匙串写不进去（用户点了「拒绝」、钥匙串锁着……）不能让整个
+                // 保存失败——那样用户连改个快捷键都存不下。退回明文：和以前的
+                // 行为一样，至少 Key 不会丢，下次启动还会再试着迁移。
+                Err(err) => log::warn!("{name} 写入 Keychain 失败，暂时留在 config.json: {err}"),
+            }
+        }
+    }
+
+    write_atomic(&config_path(), &serde_json::to_string_pretty(&on_disk)?)
 }
 
 pub fn get() -> Config {
@@ -239,7 +309,7 @@ pub fn write_atomic(path: &std::path::Path, contents: &str) -> anyhow::Result<()
 pub fn save(next: Config) -> anyhow::Result<Config> {
     // 先落盘再更新内存：写失败时内存状态不该已经变了，
     // 否则界面显示的是新值、重启后又变回旧值，对不上。
-    write_atomic(&config_path(), &serde_json::to_string_pretty(&next)?)?;
+    persist(&next)?;
     {
         let mut guard = CONFIG.write().expect("config lock poisoned");
         *guard = next.clone();
@@ -312,4 +382,56 @@ pub fn target_languages() -> Vec<(&'static str, &'static str)> {
         ("pt", "Português"),
         ("it", "Italiano"),
     ]
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{config_path, load_from_disk, Config};
+
+    /// 明文密钥迁移到 Keychain 的完整链路。
+    ///
+    /// 这是这块改动里唯一「做错就把用户的 Key 弄丢」的地方，只能真读真写地验。
+    /// 打 #[ignore] 是因为它要改环境变量、还要动登录钥匙串，跟别的测试并行会打架：
+    ///     cargo test --lib -- --ignored --test-threads=1 migrates
+    ///
+    /// 注意别用改 HOME 的办法来隔离配置目录：Security.framework 也靠 HOME 找
+    /// 登录钥匙串，一改就变成「Unable to obtain authorization」。
+    #[test]
+    #[ignore = "会读写登录钥匙串"]
+    fn migrates_plaintext_secrets_into_keychain() {
+        let dir = std::env::temp_dir().join(format!("snaplingo-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("SNAPLINGO_CONFIG_DIR", &dir);
+        // 换个 service 名，别碰用户真实的 Key
+        std::env::set_var("SNAPLINGO_KEYCHAIN_SERVICE", "SnapLingoTest");
+        assert_eq!(config_path(), dir.join("config.json"));
+
+        let mut seed = Config::default();
+        seed.openai_api_key = "sk-plaintext-should-move".into();
+        seed.provider = "openai".into();
+        std::fs::write(config_path(), serde_json::to_string_pretty(&seed).unwrap()).unwrap();
+
+        let loaded = load_from_disk();
+        // 内存里必须还拿得到，否则用户的引擎当场就不能用了
+        assert_eq!(loaded.openai_api_key, "sk-plaintext-should-move");
+        assert_eq!(loaded.provider, "openai", "其余字段不能被迁移弄丢");
+
+        // 文件里必须已经没有明文了
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(config_path()).unwrap()).unwrap();
+        assert_eq!(on_disk["openaiApiKey"], "");
+        assert_eq!(on_disk["provider"], "openai");
+
+        // 再读一次：这次文件里是空的，值只可能来自 Keychain
+        assert_eq!(
+            load_from_disk().openai_api_key,
+            "sk-plaintext-should-move",
+            "Keychain 里没读回来"
+        );
+
+        crate::secrets::store("openai_api_key", "").unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        std::env::remove_var("SNAPLINGO_CONFIG_DIR");
+        std::env::remove_var("SNAPLINGO_KEYCHAIN_SERVICE");
+    }
 }

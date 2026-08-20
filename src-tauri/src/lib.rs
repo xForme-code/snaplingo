@@ -2,12 +2,12 @@ mod capture;
 mod collector;
 mod commands;
 mod config;
-mod extract;
 mod hooks;
 mod localmodel;
 mod logging;
 mod ocr;
 mod permissions;
+mod secrets;
 mod selection;
 mod translate;
 mod updater;
@@ -61,7 +61,6 @@ pub fn run() {
             commands::set_config,
             commands::get_meta,
             commands::translate_text,
-            commands::extract_text,
             commands::capture_selection,
             commands::run_ocr,
             commands::copy_text,

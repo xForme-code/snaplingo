@@ -2,7 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::AppHandle;
 
-use crate::{capture, collector, config, extract, localmodel, ocr, selection, translate, windows};
+use crate::{capture, collector, config, localmodel, ocr, selection, translate, windows};
 
 /// 统一把 anyhow 错误转成前端能直接显示的字符串
 fn to_message(err: impl std::fmt::Display) -> String {
@@ -161,11 +161,6 @@ pub async fn local_model_download(app: AppHandle, id: String) -> Result<(), Stri
 #[tauri::command]
 pub fn local_model_remove(id: String) -> Result<(), String> {
     localmodel::remove(&id).map_err(to_message)
-}
-
-#[tauri::command]
-pub fn extract_text(text: String) -> extract::ExtractResult {
-    extract::extract_local(&text)
 }
 
 // ------------------------------------------------------------------ 取词 / OCR

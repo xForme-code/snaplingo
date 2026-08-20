@@ -56,6 +56,9 @@ async fn recognize_platform(app: &AppHandle, image_path: &Path) -> Result<String
 /// 这个值来自设置里可自由编辑的文本框，而 Windows 的 OCR 走 PowerShell
 /// **脚本字符串拼接**——不校验的话，一个引号就能跳出字符串上下文执行任意命令。
 /// 路径那边做了转义，语言这边原来漏了。
+// macOS/Linux 的构建里没有调用点（只有 Windows 分支和测试用），
+// 但规则本身要跟着 ocr.rs 走，不该按平台拆出去。
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 pub(crate) fn is_valid_language_tag(tag: &str) -> bool {
     !tag.is_empty()
         && tag.len() <= 35 // BCP-47 实际长度远小于此

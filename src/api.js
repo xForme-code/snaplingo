@@ -18,7 +18,6 @@ export const api = {
       target: target ?? null,
       provider: provider ?? null,
     }),
-  extract: (text) => invoke('extract_text', { text }),
 
   // 取词 / OCR
   captureSelection: () => invoke('capture_selection'),

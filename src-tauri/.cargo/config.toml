@@ -1,0 +1,11 @@
+# Windows 上必须让 Rust 也用静态 CRT。
+#
+# ct2rs 编译 CTranslate2 时写死了 `static_crt(true)`（/MT），而 Rust 的 MSVC
+# 目标默认动态 CRT（/MD）。两者混在一起，链接测试可执行文件时整个 C++ 标准库
+# 都会重复定义：LNK2038 "mismatch detected for RuntimeLibrary"、LNK2005、
+# 最后 LNK1169。注意 `cargo check` 不链接，所以这个问题只在 `cargo test` /
+# `cargo build` 才暴露——CI 上正是「编译检查过了、单元测试挂了」。
+#
+# ct2rs 的 build.rs 自己也会打这条警告，等于上游认这个前提。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

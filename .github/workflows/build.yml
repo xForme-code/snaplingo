@@ -34,6 +34,39 @@ jobs:
         working-directory: src-tauri
         run: cargo check --all-targets
 
+  macos-intel:
+    name: macOS (Intel)
+    # 存在的意义：Intel Mac 的代码路径在本机同样编不了（开发机是 Apple Silicon，
+    # 交叉编译要绕开 ct2rs 的宿主架构误判）。macos-13 是 GitHub 最后一批 Intel
+    # 机器，用它原生编一遍，才知道 x86_64 到底成不成立。
+    # 顺带还覆盖了另一条路径：这台机器是 macOS 13，低于 15，翻译 sidecar 会走
+    # 「编占位组件」的分支。
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: 安装 cmake（CTranslate2 要用）
+        run: brew list cmake >/dev/null 2>&1 || brew install cmake
+      - name: 编译 sidecar
+        run: |
+          bash scripts/build-ocr-helper.sh
+          bash scripts/build-translate-helper.sh
+      - name: 确认 sidecar 真是 x86_64
+        run: |
+          for f in src-tauri/binaries/*; do
+            echo "$f: $(lipo -archs "$f")"
+            lipo -archs "$f" | grep -q x86_64 || { echo "架构不对，Intel 机器上跑不起来"; exit 1; }
+          done
+      - name: 单元测试
+        working-directory: src-tauri
+        run: cargo test --lib
+      - name: 编译检查
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
   windows:
     name: Windows
     runs-on: windows-latest

@@ -30,6 +30,9 @@ bash scripts/release-macos.sh 0.3.0
 ```
 
 脚本会：编译 sidecar → 构建并**双重签名** → 生成 `latest.json` → 发到 GitHub Release。
+默认出 universal 二进制（Apple Silicon + Intel 一个包通吃），`latest.json` 里的
+`platforms` 按产物里真有的 slice 生成——写多了那个架构的用户会下到跑不了的包，
+写少了那批用户永远收不到更新。
 
 **两套签名不要混淆，缺一不可：**
 
@@ -123,15 +126,6 @@ const THOROUGH_TIMEOUT: Duration = Duration::from_millis(700);  // 快捷键触�
    `translate()` 的 `match` 加一个分支
 3. 前端不用改，引擎列表是从后端读的
 
-### 改内容提取的规则
-
-`src-tauri/src/extract.rs` 顶部的 `PATTERNS` 数组，一行一条正则。
-底下有单元测试，加规则时顺手加个断言：
-
-```bash
-cd src-tauri && cargo test --lib
-```
-
 ### 改界面
 
 前端是纯 HTML/CSS/JS，**没有打包工具链**，改完直接重新构建就能看到。
@@ -183,6 +177,25 @@ src-tauri/binaries/snaplingo-ocr-<target-triple>
 **日志时间戳要用本地时间。** `logging.rs` 里读了系统时区偏移。之前直接用 UTC 小时数，
 排查时日志时间和实际差 8 小时，会误判成程序卡死。
 
+**交叉编到 Intel 必须带上工具链文件。** `ct2rs` 0.10 的 `build.rs` 用
+`cfg!(target_arch = "aarch64")` 判断架构——构建脚本是在**宿主**上跑的，这个 cfg
+反映的是宿主而不是目标。在 Apple Silicon 上编 x86_64 时它会传
+`-DCMAKE_OSX_ARCHITECTURES=arm64`，和 `--target=x86_64` 打架，ruy 的 AVX 代码路径
+报 `unsupported option '-mavx'`。`scripts/cmake/x86_64-apple-darwin.cmake` 就是来掰正它的，
+靠 `CMAKE_TOOLCHAIN_FILE_x86_64_apple_darwin` 这个**带目标后缀**的环境变量生效——
+不带后缀的话 universal 构建里 arm64 那一半也会被强行编成 x86_64。
+
+**Swift sidecar 的架构和文件名是两件事，要一起对。** 文件名后缀取的是 rustc 的
+host triple，而 `swiftc` 的 `-target` 以前写死 arm64——在 Intel Mac 上就产出
+「名字叫 x86_64、内容是 arm64」的东西，打包能过，一运行 `exec format error`。
+统一走 `scripts/lib-sidecar.sh`，universal 时分别编两个架构再 `lipo` 合并。
+
+**API Key 不在 `config.json` 里。** 存 macOS 钥匙串（`src/secrets.rs`），
+`config.rs` 落盘时会把这些字段清成空串。改字段名等于让老用户的 Key 全部读不回来。
+钥匙串写不进去时会退回明文并打日志——不能让整个保存失败，否则用户连快捷键都改不了。
+另外：钥匙串条目的访问权限是跟**代码签名**走的，用固定证书签名的构建之间不会反复弹窗，
+ad-hoc 签名的每次重编译都会被当成另一个程序，会再问一次「是否允许访问」。
+
 **bash 脚本里全角括号紧贴变量名会出事。** `"...（$VAR）"` 里的 `）` 是多字节字符，
 bash 会把它当成变量名的一部分。要写成 `${VAR}`。
 
@@ -192,8 +205,15 @@ bash 会把它当成变量名的一部分。要写成 `${VAR}`。
 
 ```bash
 cd src-tauri
-cargo test --lib                            # 7 项单元测试，不依赖系统交互
+cargo test --lib                            # 单元测试，不依赖系统交互
 cargo test --lib -- --ignored --nocapture   # 含真实网络请求和系统交互的测试
+```
+
+钥匙串相关的两项也在 `--ignored` 里（要真读真写才有意义），改 `secrets.rs` /
+`config.rs` 的密钥逻辑后手动跑一遍：
+
+```bash
+cargo test --lib -- --ignored --test-threads=1 keychain migrates
 ```
 
 `--ignored` 那批里有个 `real_copy_from_textedit`，它会打开 TextEdit 造一个真实选区再走取词流程。
@@ -211,7 +231,7 @@ osascript -e 'tell application "System Events" to keystroke "c" using command do
 ## 当前状态
 
 **能用**：编译、单元测试、Google 翻译、macOS Vision OCR、托盘、快捷键注册、鼠标钩子收事件、
-内容提取、收集夹、设置界面。
+收集夹、设置界面。
 
 **没确认**：拖选取词在终端和 PDF 阅读器里能否成功。这是唯一的阻塞项。
 
