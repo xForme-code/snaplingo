@@ -229,6 +229,12 @@ pub fn sidecar_available(app: &tauri::AppHandle) -> bool {
     #[cfg(target_os = "macos")]
     {
         use tauri::Manager;
+
+        // 光看文件在不在不够：macOS 15 以下打包的是「如实回报不可用」的占位组件，
+        // 文件存在但用不了。必须同时看系统版本，否则用户会选到一个必然失败的引擎。
+        if macos_major() < 15 {
+            return false;
+        }
         let by_resource = app
             .path()
             .resolve("snaplingo-translate", tauri::path::BaseDirectory::Resource)
@@ -245,6 +251,25 @@ pub fn sidecar_available(app: &tauri::AppHandle) -> bool {
         let _ = app;
         false
     }
+}
+
+/// 当前 macOS 主版本号。查一次就够，结果不会变。
+#[cfg(target_os = "macos")]
+fn macos_major() -> u32 {
+    use std::sync::OnceLock;
+    static VERSION: OnceLock<u32> = OnceLock::new();
+
+    *VERSION.get_or_init(|| {
+        std::process::Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .and_then(|text| text.trim().split('.').next()?.parse().ok())
+            // 读不到就当成够新，让后续调用去暴露真实问题，
+            // 而不是在这里一刀切地判定不可用
+            .unwrap_or(u32::MAX)
+    })
 }
 
 /// 前端靠这个标记识别「需要下载语言包」，从而显示下载引导而不是普通报错

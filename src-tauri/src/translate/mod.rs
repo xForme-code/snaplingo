@@ -42,6 +42,65 @@ const CLOUD_COOLDOWN: Duration = Duration::from_secs(60);
 static CLOUD_DOWN_UNTIL: Lazy<Mutex<HashMap<String, Instant>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// 自动选路选中的引擎，以及选中的时间。
+///
+/// 选一次要挨个试，有失败的话每个都要等超时，代价不小。选中之后记住，
+/// 后续直接用它；它进冷却了才重新选。
+static ROUTE_WINNER: Lazy<Mutex<Option<(String, Instant)>>> = Lazy::new(|| Mutex::new(None));
+
+/// 记住的选路结果多久重新评估一次。
+///
+/// 不能永久记住：用户可能从公司网络回到家、或者刚挂上代理，
+/// 环境变了就该重新选。
+const ROUTE_TTL: Duration = Duration::from_secs(600);
+
+/// 自动选路的候选顺序。
+///
+/// 排序理由：国内直连的排前面——它们需要 Key，用户配了就说明有意愿用，
+/// 而且不挂代理也能通；然后是免配置的 Google；最后才是按量付费的 LLM。
+/// 这样在墙内墙外都能自己找到通的那条，用户不需要理解「我算国内还是国外网络」。
+const ROUTE_ORDER: &[&str] = &["youdao", "baidu", "google", "deepl", "openai", "claude", "libre"];
+
+/// 当前配置下，哪些云端引擎是可用的（填了 Key / 填了地址）
+fn configured_cloud_engines(cfg: &config::Config) -> Vec<&'static str> {
+    ROUTE_ORDER
+        .iter()
+        .copied()
+        .filter(|id| match *id {
+            "google" => true, // 免配置
+            "youdao" => {
+                !cfg.youdao_app_key.trim().is_empty() && !cfg.youdao_app_secret.trim().is_empty()
+            }
+            "baidu" => !cfg.baidu_app_id.trim().is_empty() && !cfg.baidu_secret.trim().is_empty(),
+            "deepl" => !cfg.deepl_api_key.trim().is_empty(),
+            "claude" => !cfg.claude_api_key.trim().is_empty(),
+            "openai" => {
+                !cfg.openai_api_key.trim().is_empty()
+                    || cfg.openai_base_url.contains("localhost")
+                    || cfg.openai_base_url.contains("127.0.0.1")
+            }
+            "libre" => !cfg.libre_url.trim().is_empty(),
+            _ => false,
+        })
+        .collect()
+}
+
+fn remembered_route() -> Option<String> {
+    let slot = ROUTE_WINNER.lock().ok()?;
+    let (id, at) = slot.as_ref()?;
+    if at.elapsed() < ROUTE_TTL && !cloud_in_cooldown(id) {
+        Some(id.clone())
+    } else {
+        None
+    }
+}
+
+fn remember_route(id: &str) {
+    if let Ok(mut slot) = ROUTE_WINNER.lock() {
+        *slot = Some((id.to_string(), Instant::now()));
+    }
+}
+
 fn cloud_in_cooldown(provider: &str) -> bool {
     CLOUD_DOWN_UNTIL
         .lock()
@@ -118,6 +177,13 @@ pub struct ProviderInfo {
 pub fn list_providers(app: &tauri::AppHandle) -> Vec<ProviderInfo> {
     let cfg = config::get();
     vec![
+        ProviderInfo {
+            id: "auto",
+            label: "自动选择（推荐）",
+            needs_key: false,
+            available: true,
+            note: "挨个试你配置好的云端引擎，谁通用谁，并记住结果。不用自己判断当前是国内还是国际网络。全都不通时回落离线翻译。",
+        },
         ProviderInfo {
             id: "system",
             label: "系统翻译（离线）",
@@ -237,6 +303,14 @@ pub async fn translate(
         return dispatch(app, &provider_id, &prepared, &source_lang, &target_lang).await;
     }
 
+    // 自动选路：挨个试已配置的云端引擎，谁先成功就记住谁。
+    //
+    // 存在的意义：用户不该需要理解「我现在算国内网络还是国际网络」。
+    // 墙内 Google 不通、墙外有道要绕远，与其让人自己判断，不如程序去试。
+    if provider_id == "auto" {
+        return auto_route(app, &cfg, &prepared, &source_lang, &target_lang).await;
+    }
+
     // 否则走「联网优先、断网回落」：
     // 云端质量更好，能用就用；连不上就自动切本地，用户不需要知道发生了什么。
     let budget = budget_for(&provider_id);
@@ -271,6 +345,70 @@ pub async fn translate(
     }
 
     local_fallback(app, &prepared, &source_lang, &target_lang).await
+}
+
+/// 自动选路：按候选顺序试，第一个成功的就是这一轮的答案。
+async fn auto_route(
+    app: &tauri::AppHandle,
+    cfg: &config::Config,
+    prepared: &str,
+    source_lang: &str,
+    target_lang: &str,
+) -> Result<Translation> {
+    // 上次选中的还在有效期内、也没进冷却，直接用，省下挨个试的开销
+    if let Some(id) = remembered_route() {
+        match tokio::time::timeout(
+            budget_for(&id),
+            dispatch(app, &id, prepared, source_lang, target_lang),
+        )
+        .await
+        {
+            Ok(Ok(translation)) => return Ok(translation),
+            Ok(Err(err)) => {
+                log::warn!("自动选路：记住的 {id} 失败了，重新选: {err}");
+                note_cloud_down(&id);
+            }
+            Err(_) => {
+                log::warn!("自动选路：记住的 {id} 超时，重新选");
+                note_cloud_down(&id);
+            }
+        }
+    }
+
+    let candidates = configured_cloud_engines(cfg);
+    log::debug!("自动选路候选: {candidates:?}");
+
+    for id in candidates {
+        if cloud_in_cooldown(id) {
+            continue;
+        }
+        match tokio::time::timeout(
+            budget_for(id),
+            dispatch(app, id, prepared, source_lang, target_lang),
+        )
+        .await
+        {
+            Ok(Ok(translation)) => {
+                log::info!("自动选路：选中 {id}");
+                remember_route(id);
+                note_cloud_ok(id);
+                return Ok(translation);
+            }
+            Ok(Err(err)) => {
+                // 配置错误不该让这个引擎被反复重试，但也不该中断整轮选路——
+                // 用户可能配了三个引擎，其中一个 Key 填错，剩下两个还能用
+                log::debug!("自动选路：{id} 不通（{err}）");
+                note_cloud_down(id);
+            }
+            Err(_) => {
+                log::debug!("自动选路：{id} 超时");
+                note_cloud_down(id);
+            }
+        }
+    }
+
+    log::info!("自动选路：所有云端引擎都不通，回落本地");
+    local_fallback(app, prepared, source_lang, target_lang).await
 }
 
 /// 本地两级回落：系统翻译 → OPUS-MT 离线模型。
@@ -476,5 +614,46 @@ mod cooldown_tests {
         // 网络类问题才该静默回落并进冷却
         assert!(is_transient(&anyhow!("error sending request for url")));
         assert!(is_transient(&anyhow!("下载中断: connection reset")));
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    fn cfg_with(youdao: bool, deepl: bool) -> config::Config {
+        let mut c = config::Config::default();
+        if youdao {
+            c.youdao_app_key = "k".into();
+            c.youdao_app_secret = "s".into();
+        }
+        if deepl {
+            c.deepl_api_key = "k".into();
+        }
+        c.libre_url = String::new(); // 默认指向 localhost，测试里排除掉
+        c
+    }
+
+    #[test]
+    fn only_configured_engines_are_candidates() {
+        // 没配任何 Key 时，只有免配置的 Google 可选
+        assert_eq!(configured_cloud_engines(&cfg_with(false, false)), vec!["google"]);
+    }
+
+    #[test]
+    fn domestic_engines_are_tried_before_google() {
+        // 用户特意配了有道，说明有「不挂代理也要能用」的诉求，该优先试
+        let candidates = configured_cloud_engines(&cfg_with(true, false));
+        let youdao = candidates.iter().position(|id| *id == "youdao").unwrap();
+        let google = candidates.iter().position(|id| *id == "google").unwrap();
+        assert!(youdao < google, "国内直连引擎应排在 Google 之前");
+    }
+
+    #[test]
+    fn paid_llm_engines_come_last() {
+        let candidates = configured_cloud_engines(&cfg_with(true, true));
+        let deepl = candidates.iter().position(|id| *id == "deepl").unwrap();
+        let google = candidates.iter().position(|id| *id == "google").unwrap();
+        assert!(google < deepl, "免费的应排在按量付费的之前");
     }
 }

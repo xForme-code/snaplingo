@@ -44,15 +44,21 @@ jobs:
         with:
           workspaces: src-tauri
       # macOS 的 sidecar 在这里既编不出也用不上，但 tauri.conf.json 的
-      # externalBin 会要求文件存在。放两个占位文件让配置成立——
-      # Windows 的 OCR 走系统 API，翻译走云端或 OPUS-MT，都不需要它们。
+      # externalBin 要求文件存在。**不能放 0 字节的空文件**——Tauri 会把它当
+      # 可执行资源嵌进去，链接器报 1169（找不到符号）。放一个真正能跑的最小程序。
       - name: 放置 sidecar 占位
         shell: bash
         run: |
           mkdir -p src-tauri/binaries
           triple=$(rustc -vV | sed -n 's/^host: //p')
+          cat > /tmp/stub.rs <<'EOF'
+          fn main() {
+              println!(r#"{{"ok":false,"status":"unavailable","text":"","error":"该平台不提供此组件"}}"#);
+              std::process::exit(1);
+          }
+          EOF
           for name in snaplingo-ocr snaplingo-translate; do
-            printf '' > "src-tauri/binaries/${name}-${triple}.exe"
+            rustc -O /tmp/stub.rs -o "src-tauri/binaries/${name}-${triple}.exe"
           done
       - name: 编译检查（关键：验证 Windows 代码路径是否成立）
         working-directory: src-tauri
@@ -63,7 +69,10 @@ jobs:
 
   linux:
     name: Linux
-    runs-on: ubuntu-22.04
+    # 用 24.04 而不是 22.04：xcap 依赖的 PipeWire 绑定和 22.04 的
+    # libpipewire 版本对不上（spa_meta_first 等符号找不到），是上游的
+    # 版本兼容问题，不是我们的代码。
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -80,8 +89,14 @@ jobs:
         run: |
           mkdir -p src-tauri/binaries
           triple=$(rustc -vV | sed -n 's/^host: //p')
+          cat > /tmp/stub.rs <<'EOF'
+          fn main() {
+              println!(r#"{{"ok":false,"status":"unavailable","text":"","error":"该平台不提供此组件"}}"#);
+              std::process::exit(1);
+          }
+          EOF
           for name in snaplingo-ocr snaplingo-translate; do
-            : > "src-tauri/binaries/${name}-${triple}"
+            rustc -O /tmp/stub.rs -o "src-tauri/binaries/${name}-${triple}"
           done
       - name: 编译检查
         working-directory: src-tauri
