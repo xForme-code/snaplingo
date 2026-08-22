@@ -22,6 +22,17 @@ const BUBBLE_W: f64 = 252.0;
 const BUBBLE_H: f64 = 64.0;
 
 // 翻译面板贴着光标弹出，尺寸按「一屏能读完一段」来定，不做成大窗口
+/// 窗口离光标的间距，以及窗口内那层 CSS margin。
+///
+/// place_near 摆的是**窗口**，用户看到的却是窗口内缩进一层 margin 之后的内容，
+/// 所以传给它的间距要先把 margin 减掉，否则视觉间距会凭空多出一个 margin。
+/// 写成两个常量相减而不是直接写差值：差值是多少不重要，「间距减 margin」
+/// 这件事才是要留给下一个人看的。
+const BUBBLE_GAP: f64 = 18.0;
+const BUBBLE_MARGIN: f64 = 14.0;
+const RESULT_GAP: f64 = 16.0;
+const RESULT_MARGIN: f64 = 16.0;
+
 const RESULT_W: f64 = 420.0;
 const RESULT_H: f64 = 360.0;
 
@@ -207,9 +218,7 @@ pub fn show_bubble(app: &AppHandle, payload: Payload, anchor: Option<(f64, f64)>
 
     let scale = window.scale_factor().unwrap_or(1.0);
     let cursor = anchor_or_cursor(app, anchor, scale);
-    // gap 减去 CSS margin（14px）：place_near 摆的是窗口，而用户看到的是
-    // 窗口内缩进 14px 的那个条，不补偿的话视觉间距会多出一个 margin
-    let (x, y) = place_near(&window, cursor, (BUBBLE_W, BUBBLE_H), 18.0 - 14.0);
+    let (x, y) = place_near(&window, cursor, (BUBBLE_W, BUBBLE_H), BUBBLE_GAP - BUBBLE_MARGIN);
 
     let _ = window.set_size(LogicalSize::new(BUBBLE_W, BUBBLE_H));
     let _ = window.set_position(LogicalPosition::new(x, y));
@@ -293,8 +302,7 @@ pub fn show_result(app: &AppHandle, payload: Payload, anchor: Option<(f64, f64)>
 
     let scale = window.scale_factor().unwrap_or(1.0);
     let cursor = anchor_or_cursor(app, anchor, scale);
-    // 同气泡：减去面板的 CSS margin（16px）
-    let (x, y) = place_near(&window, cursor, (RESULT_W, RESULT_H), 16.0 - 16.0);
+    let (x, y) = place_near(&window, cursor, (RESULT_W, RESULT_H), RESULT_GAP - RESULT_MARGIN);
 
     let _ = window.set_size(LogicalSize::new(RESULT_W, RESULT_H));
     let _ = window.set_position(LogicalPosition::new(x, y));

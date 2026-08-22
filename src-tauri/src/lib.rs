@@ -149,7 +149,10 @@ pub fn run() {
 
             // 应用真正就绪后再开首次运行的设置窗口
             RunEvent::Ready => {
-                if PENDING_FIRST_RUN.swap(false, Ordering::Relaxed) {
+                // swap 是有副作用的（把标志置回 false），不能塞进 match guard——
+                // 那样读代码的人很难注意到分支判断本身就改了状态
+                let first_run = PENDING_FIRST_RUN.swap(false, Ordering::Relaxed);
+                if first_run {
                     if let Err(err) = windows::show_settings(app) {
                         log::error!("首次运行打开设置窗口失败: {err}");
                     }

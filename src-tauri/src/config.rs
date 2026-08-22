@@ -4,21 +4,16 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 
 /// 划词后的触发方式
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TriggerMode {
     /// 划完只弹一个小图标条，点了才动作（默认，防误触）
+    #[default]
     Bubble,
     /// 划完直接翻译并弹结果面板
     Auto,
     /// 完全不监听鼠标，只用快捷键
     Hotkey,
-}
-
-impl Default for TriggerMode {
-    fn default() -> Self {
-        TriggerMode::Bubble
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

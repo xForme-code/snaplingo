@@ -26,20 +26,26 @@ struct Spec {
     url: &'static str,
     /// 下载大小（字节），实测值，用于进度条和下载前告知用户
     bytes: u64,
+    /// 压缩包的 SHA-256。
+    ///
+    /// 上游（Argos 的包索引）**不提供任何校验和**，这些是我们自己把每个包
+    /// 完整下下来算出来的。没有它的话，下到手的几十上百 MB 二进制会被直接
+    /// 喂给 CTranslate2——传输被掉包、CDN 出错、上游仓库被改，程序都察觉不到。
+    sha256: &'static str,
 }
 
 const REGISTRY: &[Spec] = &[
-    Spec { id: "en-zh", from: "en", to: "zh", label: "英语 → 中文", url: "https://argos-net.com/v1/translate-en_zh-1_9.argosmodel", bytes: 70_743_021 },
-    Spec { id: "zh-en", from: "zh", to: "en", label: "中文 → 英语", url: "https://argos-net.com/v1/translate-zh_en-1_9.argosmodel", bytes: 74_481_402 },
-    Spec { id: "en-ja", from: "en", to: "ja", label: "英语 → 日语", url: "https://argos-net.com/v1/translate-en_ja-1_1.argosmodel", bytes: 120_470_284 },
-    Spec { id: "ja-en", from: "ja", to: "en", label: "日语 → 英语", url: "https://argos-net.com/v1/translate-ja_en-1_1.argosmodel", bytes: 117_155_716 },
-    Spec { id: "en-ko", from: "en", to: "ko", label: "英语 → 韩语", url: "https://argos-net.com/v1/translate-en_ko-1_1.argosmodel", bytes: 120_789_009 },
-    Spec { id: "ko-en", from: "ko", to: "en", label: "韩语 → 英语", url: "https://argos-net.com/v1/translate-ko_en-1_1.argosmodel", bytes: 118_852_077 },
-    Spec { id: "en-fr", from: "en", to: "fr", label: "英语 → 法语", url: "https://argos-net.com/v1/translate-en_fr-1_9.argosmodel", bytes: 65_472_327 },
-    Spec { id: "fr-en", from: "fr", to: "en", label: "法语 → 英语", url: "https://argos-net.com/v1/translate-fr_en-1_9.argosmodel", bytes: 66_585_033 },
-    Spec { id: "en-de", from: "en", to: "de", label: "英语 → 德语", url: "https://argos-net.com/v1/translate-en_de-1_3.argosmodel", bytes: 150_508_297 },
-    Spec { id: "en-ru", from: "en", to: "ru", label: "英语 → 俄语", url: "https://argos-net.com/v1/translate-en_ru-1_9.argosmodel", bytes: 195_746_693 },
-    Spec { id: "en-es", from: "en", to: "es", label: "英语 → 西班牙语", url: "https://argos-net.com/v1/translate-en_es-1_0.argosmodel", bytes: 87_503_191 },
+    Spec { id: "en-zh", from: "en", to: "zh", label: "英语 → 中文", url: "https://argos-net.com/v1/translate-en_zh-1_9.argosmodel", bytes: 70_743_021, sha256: "433e7c4f034d87fbe2353161e05f18646d7999452f801a4e1f0378522b9850ab" },
+    Spec { id: "zh-en", from: "zh", to: "en", label: "中文 → 英语", url: "https://argos-net.com/v1/translate-zh_en-1_9.argosmodel", bytes: 74_481_402, sha256: "62e7af5a3a48b530e47b7b3e5c78c2de79073ecd815750d2bf3ab35b4a67da2d" },
+    Spec { id: "en-ja", from: "en", to: "ja", label: "英语 → 日语", url: "https://argos-net.com/v1/translate-en_ja-1_1.argosmodel", bytes: 120_470_284, sha256: "16300cc4eaa85320520cabcf433b63d01be40ef6966251de72043a083408f716" },
+    Spec { id: "ja-en", from: "ja", to: "en", label: "日语 → 英语", url: "https://argos-net.com/v1/translate-ja_en-1_1.argosmodel", bytes: 117_155_716, sha256: "623e3477959a815eb0a5ef53e09079ae8f1f9d3bbcd230473baf28c03fb83335" },
+    Spec { id: "en-ko", from: "en", to: "ko", label: "英语 → 韩语", url: "https://argos-net.com/v1/translate-en_ko-1_1.argosmodel", bytes: 120_789_009, sha256: "e03d8e65e6d44525ec5808c3409fcf8728c76c2c76925372b6d3dc3278de17fc" },
+    Spec { id: "ko-en", from: "ko", to: "en", label: "韩语 → 英语", url: "https://argos-net.com/v1/translate-ko_en-1_1.argosmodel", bytes: 118_852_077, sha256: "6da8f3db6ca40f42b1875570a1c06856f6e17c7ef62845d85de217ba548c1471" },
+    Spec { id: "en-fr", from: "en", to: "fr", label: "英语 → 法语", url: "https://argos-net.com/v1/translate-en_fr-1_9.argosmodel", bytes: 65_472_327, sha256: "3a65ed83364f4e7b06e30f9dd823db1934899ed3ce839e63f46dc7b09dc797b4" },
+    Spec { id: "fr-en", from: "fr", to: "en", label: "法语 → 英语", url: "https://argos-net.com/v1/translate-fr_en-1_9.argosmodel", bytes: 66_585_033, sha256: "3b3052fee6bb1e8e8e632a26a723eb2a2c7710dfe73ba61ffd9b83e85d4f14c1" },
+    Spec { id: "en-de", from: "en", to: "de", label: "英语 → 德语", url: "https://argos-net.com/v1/translate-en_de-1_3.argosmodel", bytes: 150_508_297, sha256: "6cd847f0c06c9c66013e6b0932e07fd54a6d90894659c02bf6c5247b72fb25b1" },
+    Spec { id: "en-ru", from: "en", to: "ru", label: "英语 → 俄语", url: "https://argos-net.com/v1/translate-en_ru-1_9.argosmodel", bytes: 195_746_693, sha256: "591d743ae103752b88ffc38785c50421320f4eff93c8967e0d3d2e14d4e27811" },
+    Spec { id: "en-es", from: "en", to: "es", label: "英语 → 西班牙语", url: "https://argos-net.com/v1/translate-en_es-1_0.argosmodel", bytes: 87_503_191, sha256: "d698d0ef87ad70d5d184b7fa6965905bf4368f09a2bb9ffb165a79bac96af0c4" },
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -284,6 +290,26 @@ async fn download_inner(app: &AppHandle, spec: &'static Spec, archive_path: &Pat
         return Err(anyhow!("下载不完整（{actual} / {total} 字节），请重试"));
     }
 
+    // 大小对得上不代表内容对。校验哈希再解压——**必须在解压之前**，
+    // 解开之后再发现不对，坏文件已经落到模型目录里了。
+    let to_verify = archive_path.to_path_buf();
+    let expected = spec.sha256;
+    let actual_hash = tokio::task::spawn_blocking(move || sha256_of(&to_verify))
+        .await
+        .map_err(|e| anyhow!("校验任务异常: {e}"))??;
+
+    if actual_hash != expected {
+        // 这里**必须删掉** .partial，和其它错误路径的处理相反。
+        // 别处保留残档是为了续传，但内容已经错了的文件续不出正确结果——
+        // 续传只会往一堆坏字节后面接着写，用户点几次下载就失败几次，
+        // 而且永远不会好。
+        let _ = std::fs::remove_file(archive_path);
+        log::warn!("模型 {} 校验失败：期望 {expected}，实际 {actual_hash}", spec.id);
+        return Err(anyhow!(
+            "下载的模型文件校验不通过，已丢弃。可能是网络中间环节篡改或缓存了错误内容，请重试或换个网络。"
+        ));
+    }
+
     emit(app, Progress { id: spec.id.into(), phase: "extracting", received: total, total, error: None });
 
     // 解压是纯 CPU + 磁盘的阻塞活，挪出异步运行时
@@ -292,6 +318,28 @@ async fn download_inner(app: &AppHandle, spec: &'static Spec, archive_path: &Pat
     tokio::task::spawn_blocking(move || extract(&archive, &target))
         .await
         .map_err(|e| anyhow!("解压任务异常: {e}"))?
+}
+
+/// 算文件的 SHA-256。
+///
+/// 分块读而不是一次性读进内存：模型最大 190 MB，整个读进来纯属浪费，
+/// 内存紧张的机器上还可能直接失败。
+fn sha256_of(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).map_err(|e| anyhow!("打开待校验文件失败: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+
+    loop {
+        let n = file.read(&mut buf).map_err(|e| anyhow!("读取待校验文件失败: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
 }
 
 /// 解开 .argosmodel。
@@ -376,6 +424,34 @@ mod tests {
             assert!(spec.bytes > 1_000_000, "{} 的大小明显不对", spec.id);
             assert!(spec.url.ends_with(".argosmodel"), "{} 的地址不是模型包", spec.id);
         }
+    }
+
+    /// 哈希写错的后果是**这个语言方向永远装不上**，而且报错看起来像网络问题，
+    /// 排查起来很绕。抄错一位、少一位、混进大写都要在这里就拦住。
+    #[test]
+    fn registry_hashes_are_well_formed() {
+        let mut seen = std::collections::HashSet::new();
+        for spec in REGISTRY {
+            assert_eq!(spec.sha256.len(), 64, "{} 的哈希长度不对", spec.id);
+            assert!(
+                spec.sha256.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+                "{} 的哈希含非法字符（必须是小写十六进制）",
+                spec.id
+            );
+            assert!(seen.insert(spec.sha256), "{} 的哈希和别的条目重复了", spec.id);
+        }
+    }
+
+    #[test]
+    fn sha256_matches_known_value() {
+        let path = std::env::temp_dir().join(format!("snaplingo-sha-{}", std::process::id()));
+        std::fs::write(&path, b"abc").unwrap();
+        // "abc" 的 SHA-256 是公开的标准测试向量
+        assert_eq!(
+            sha256_of(&path).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        std::fs::remove_file(&path).ok();
     }
 
     /// 用真实的 .argosmodel 验证解压：剥顶层目录、跳过 stanza、文件齐全。

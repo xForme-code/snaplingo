@@ -25,7 +25,13 @@ pub struct SelectionGesture {
     pub y: f64,
 }
 
-static CHANNEL: Lazy<(Mutex<Sender<SelectionGesture>>, Mutex<Option<Receiver<SelectionGesture>>>)> =
+/// 发送端常驻，接收端只取一次（交给消费线程），所以用 Option 包着。
+type GestureChannel = (
+    Mutex<Sender<SelectionGesture>>,
+    Mutex<Option<Receiver<SelectionGesture>>>,
+);
+
+static CHANNEL: Lazy<GestureChannel> =
     Lazy::new(|| {
         let (tx, rx) = mpsc::channel();
         (Mutex::new(tx), Mutex::new(Some(rx)))
