@@ -16,7 +16,10 @@ cd "$(dirname "$0")/.."
 
 KEY="$HOME/.snaplingo-keys/updater.key"
 CERT="SnapLingo Dev Signing"
-REPO="xForme-code/snaplingo"
+# 仓库 2026-08-22 从 snaplingo 改名成 SnapLingo。GitHub 对旧路径做 301 跳转，
+# 所以 v0.5.0 及更早的用户（更新地址是编译进去的旧 URL）还能正常收到更新。
+# **绝不能再建一个叫 snaplingo 的仓库**——那会顶掉跳转，老用户从此断更。
+REPO="xForme-code/SnapLingo"
 
 [[ -f "$KEY" ]] || { echo "[error] 找不到更新签名私钥: $KEY"; exit 1; }
 
