@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 source scripts/lib-sidecar.sh
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "[ocr-helper] 非 macOS，跳过（Windows 用系统 OCR API，Linux 用 ONNX 模型）"
+  echo "[ocr-helper] 非 macOS，跳过（Windows 用系统 OCR API，Linux 用 tesseract 命令）"
   exit 0
 fi
 
