@@ -52,11 +52,12 @@ export APPLE_SIGNING_IDENTITY="$CERT"
 npx -y @tauri-apps/cli@^2 build --target "$TARGET_TRIPLE" --bundles dmg,app
 
 BUNDLE="src-tauri/target/$TARGET_TRIPLE/release/bundle"
-# Tauri 的 DMG 命名里带架构（SnapLingo_0.4.0_aarch64.dmg / _x64 / _universal），
+# Tauri 的 DMG 命名里带架构（SnapLingo_0.5.0_aarch64.dmg / _x64 / _universal），
 # 与其猜后缀不如直接找——猜错了脚本会在最后一步才炸。
-# 统一改名成 snaplingo-<版本>.dmg，改名只在上传前做，构建产物本身不动。
+# 统一改名成 SnapLingo-<版本>.dmg：用 mv 不用 cp，否则磁盘上留两份一模一样的
+# 安装包，看的人会以为构建出了两个不同的东西。
 DMG_RAW="$(ls "$BUNDLE/dmg/SnapLingo_${VERSION}_"*.dmg 2>/dev/null | head -1 || true)"
-DMG="$BUNDLE/dmg/snaplingo-${VERSION}.dmg"
+DMG="$BUNDLE/dmg/SnapLingo-${VERSION}.dmg"
 TARBALL="$BUNDLE/macos/SnapLingo.app.tar.gz"
 SIGFILE="$TARBALL.sig"
 
@@ -70,13 +71,13 @@ done
 ARCHS="$(lipo -archs "$BUNDLE/macos/SnapLingo.app/Contents/MacOS/SnapLingo")"
 echo "[build] 主程序架构: $ARCHS"
 
-cp "$DMG_RAW" "$DMG"
+mv "$DMG_RAW" "$DMG"
 
 # ---------------------------------------------------------------- 更新清单
 # 文件名必须和上传到 Release 的一致，否则旧版本下载会 404。
 # 这里和 DMG 用同一套命名，Release 页面看起来才整齐。
-ASSET="snaplingo-${VERSION}.app.tar.gz"
-cp "$TARBALL" "$BUNDLE/macos/$ASSET"
+ASSET="SnapLingo-${VERSION}.app.tar.gz"
+mv "$TARBALL" "$BUNDLE/macos/$ASSET"
 
 echo "[manifest] 生成 latest.json"
 python3 - "$VERSION" "$SIGFILE" "$REPO" "$TAG" "$ASSET" "$ARCHS" > "$BUNDLE/latest.json" <<'PY'
