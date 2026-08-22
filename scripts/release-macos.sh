@@ -80,7 +80,11 @@ mv "$DMG_RAW" "$DMG"
 # 文件名必须和上传到 Release 的一致，否则旧版本下载会 404。
 # 这里和 DMG 用同一套命名，Release 页面看起来才整齐。
 ASSET="SnapLingo-${VERSION}.app.tar.gz"
+# 签名文件跟着一起改名，否则产物目录里会留下一个叫 SnapLingo.app.tar.gz.sig
+# 的孤儿，和它对应的包已经不叫这个名字了，看的人得猜。
 mv "$TARBALL" "$BUNDLE/macos/$ASSET"
+mv "$SIGFILE" "$BUNDLE/macos/$ASSET.sig"
+SIGFILE="$BUNDLE/macos/$ASSET.sig"
 
 echo "[manifest] 生成 latest.json"
 python3 - "$VERSION" "$SIGFILE" "$REPO" "$TAG" "$ASSET" "$ARCHS" > "$BUNDLE/latest.json" <<'PY'
