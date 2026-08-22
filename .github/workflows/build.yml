@@ -35,16 +35,21 @@ jobs:
         run: cargo check --all-targets
 
   macos-intel:
-    name: macOS (Intel)
-    # 存在的意义：Intel Mac 的代码路径在本机同样编不了（开发机是 Apple Silicon，
-    # 交叉编译要绕开 ct2rs 的宿主架构误判）。macos-13 是 GitHub 最后一批 Intel
-    # 机器，用它原生编一遍，才知道 x86_64 到底成不成立。
-    # 顺带还覆盖了另一条路径：这台机器是 macOS 13，低于 15，翻译 sidecar 会走
-    # 「编占位组件」的分支。
-    runs-on: macos-13
+    name: macOS (Intel，交叉编译)
+    # GitHub 已经下架 macos-13（最后一批 Intel runner），排不到机器的 job 会
+    # 干等 24 小时再超时，CI 会一直红着。所以改成在 ARM 机器上交叉编 x86_64。
+    # 验不到的是「原生 Intel 机器上编译」那条路径（ct2rs 按宿主架构走的分支），
+    # 但发布产物本来就是在 Apple Silicon 上交叉编出来的，这里验的正是那条路。
+    #
+    # macos-14 低于 15，顺带覆盖了翻译 sidecar「编占位组件」的分支。
+    runs-on: macos-14
+    env:
+      TARGET_TRIPLE: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -55,17 +60,23 @@ jobs:
           bash scripts/build-ocr-helper.sh
           bash scripts/build-translate-helper.sh
       - name: 确认 sidecar 真是 x86_64
+        # 以前 swiftc 的 -target 写死 arm64，而文件名后缀取 rustc host triple，
+        # 会产出「名字叫 x86_64、内容是 arm64」的东西——打包能过，一运行就
+        # exec format error。这一步就是拦这个。
         run: |
-          for f in src-tauri/binaries/*; do
+          for f in src-tauri/binaries/*x86_64*; do
             echo "$f: $(lipo -archs "$f")"
-            lipo -archs "$f" | grep -q x86_64 || { echo "架构不对，Intel 机器上跑不起来"; exit 1; }
+            lipo -archs "$f" | grep -qx x86_64 || { echo "架构不对，Intel 机器上跑不起来"; exit 1; }
           done
-      - name: 单元测试
+      - name: 编译检查（x86_64）
         working-directory: src-tauri
-        run: cargo test --lib
-      - name: 编译检查
-        working-directory: src-tauri
-        run: cargo check --all-targets
+        # 工具链文件用来掰正 ct2rs 的宿主架构误判，见 scripts/cmake/ 下的注释。
+        # 变量名带目标后缀，不带的话会波及其它目标。
+        env:
+          CMAKE_TOOLCHAIN_FILE_x86_64_apple_darwin: ${{ github.workspace }}/scripts/cmake/x86_64-apple-darwin.cmake
+        run: cargo check --target x86_64-apple-darwin --all-targets
+      # 不跑单元测试：这是 ARM 机器，跑不了 x86_64 的测试二进制。
+      # 单元测试由 macOS (Apple Silicon) 那个 job 覆盖。
 
   windows:
     name: Windows
